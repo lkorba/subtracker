@@ -15,6 +15,9 @@
 [build]
   command = "npm run build"
   publish = "dist/client"
+  # TanStack Start + Nitro require modern Node. Netlify's default is Node 18
+  # which fails with `crypto.randomUUID is not a function` etc. Pin to 22.
+  environment = { NODE_VERSION = "22" }
 
 [functions]
   # TanStack Start on Nitro produces a function at .netlify/functions-internal/server
