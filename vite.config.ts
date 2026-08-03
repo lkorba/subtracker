@@ -12,4 +12,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Override the default cloudflare-module preset to target Netlify Functions.
+  // This makes `vite build` produce a server bundle that Netlify can run.
+  nitro: {
+    preset: "netlify",
+  },
 });
