@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,10 +23,22 @@ function AuthPage() {
 
   const handleGoogle = async () => {
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin + "/auth" });
-    if (result.error) { toast.error(result.error.message); setLoading(false); return; }
-    if (result.redirected) return;
-    navigate({ to: "/dashboard" });
+    // Use Supabase's native OAuth (the lovable wrapper required the Lovable
+    // platform's Cloud Auth, which we don't have on a vanilla Supabase project).
+    // The redirect URL must be in the Supabase allow-list AND Google Cloud's
+    // authorized redirect URIs list.
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin + "/auth",
+      },
+    });
+    if (error) {
+      toast.error(error.message);
+      setLoading(false);
+    }
+    // On success, supabase.auth.signInWithOAuth() redirects the browser to
+    // Google's consent screen — the navigate() below never runs in that case.
   };
 
   const handleEmail = async (e: React.FormEvent<HTMLFormElement>, mode: "in" | "up") => {
