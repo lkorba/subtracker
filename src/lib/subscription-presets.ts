@@ -115,7 +115,11 @@ export const FX_TO_USD: Record<string, number> = {
 
 export function formatMoney(amount: number, currency: string): string {
   const sym = CURRENCY_SYMBOLS[currency] ?? "";
-  return `${sym}${amount.toFixed(2)}`;
+  const grouped = amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${sym}${grouped}`;
 }
 
 export const PRESETS: Preset[] = [

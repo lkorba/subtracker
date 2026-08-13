@@ -14,11 +14,24 @@ export const Route = createFileRoute("/auth")({ component: AuthPage });
 function AuthPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [recoveryActive, setRecoveryActive] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryConfirm, setRecoveryConfirm] = useState("");
+  const [forgotEmail, setForgotEmail] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) navigate({ to: "/dashboard" });
     });
+
+    // Password recovery links land on this page with a recovery token;
+    // supabase-js fires PASSWORD_RECOVERY so we can swap in the
+    // "choose a new password" form.
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setRecoveryActive(true);
+    });
+    return () => sub.subscription.unsubscribe();
   }, [navigate]);
 
   const handleGoogle = async () => {
@@ -60,6 +73,30 @@ function AuthPage() {
     else navigate({ to: "/dashboard" });
   };
 
+  const handleForgot = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: window.location.origin + "/auth",
+    });
+    setLoading(false);
+    if (error) return toast.error(error.message);
+    toast.success("Reset link sent. Check your inbox.");
+    setForgotOpen(false);
+  };
+
+  const handleRecovery = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (recoveryPassword.length < 6) return toast.error("Password must be at least 6 characters");
+    if (recoveryPassword !== recoveryConfirm) return toast.error("Passwords do not match");
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password: recoveryPassword });
+    setLoading(false);
+    if (error) return toast.error(error.message);
+    toast.success("Password updated. Welcome back!");
+    navigate({ to: "/dashboard" });
+  };
+
   return (
     <div className="grid min-h-screen place-items-center bg-background px-4">
       <div className="w-full max-w-md">
@@ -71,43 +108,115 @@ function AuthPage() {
         </Link>
         <Card className="shadow-[var(--shadow-soft)]">
           <CardHeader>
-            <CardTitle className="font-display text-2xl">Welcome</CardTitle>
+            <CardTitle className="font-display text-2xl">
+              {recoveryActive ? "Set a new password" : forgotOpen ? "Reset password" : "Welcome"}
+            </CardTitle>
             <CardDescription>
-              Sign in or create an account to track your subscriptions.
+              {recoveryActive
+                ? "Your recovery link is verified. Choose a new password."
+                : forgotOpen
+                  ? "We'll email you a secure reset link."
+                  : "Sign in or create an account to track your subscriptions."}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={handleGoogle} disabled={loading} variant="outline" className="w-full">
-              <GoogleIcon /> Continue with Google
-            </Button>
-            <div className="my-4 flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="h-px flex-1 bg-border" />
-              or
-              <span className="h-px flex-1 bg-border" />
-            </div>
-            <Tabs defaultValue="in">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="in">Sign in</TabsTrigger>
-                <TabsTrigger value="up">Create account</TabsTrigger>
-              </TabsList>
-              {(["in", "up"] as const).map((mode) => (
-                <TabsContent key={mode} value={mode}>
-                  <form onSubmit={(e) => handleEmail(e, mode)} className="space-y-3">
-                    <div className="space-y-1">
-                      <Label>Email</Label>
-                      <Input name="email" type="email" required />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Password</Label>
-                      <Input name="password" type="password" minLength={6} required />
-                    </div>
-                    <Button type="submit" disabled={loading} className="w-full">
-                      {mode === "in" ? "Sign in" : "Create account"}
-                    </Button>
-                  </form>
-                </TabsContent>
-              ))}
-            </Tabs>
+            {recoveryActive ? (
+              <form onSubmit={handleRecovery} className="space-y-3">
+                <div className="space-y-1">
+                  <Label>New password</Label>
+                  <Input
+                    type="password"
+                    minLength={6}
+                    required
+                    value={recoveryPassword}
+                    onChange={(e) => setRecoveryPassword(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Confirm password</Label>
+                  <Input
+                    type="password"
+                    minLength={6}
+                    required
+                    value={recoveryConfirm}
+                    onChange={(e) => setRecoveryConfirm(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={loading} className="w-full">
+                  Save new password
+                </Button>
+              </form>
+            ) : forgotOpen ? (
+              <form onSubmit={handleForgot} className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    required
+                    placeholder="you@example.com"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={loading} className="w-full">
+                  Send reset link
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setForgotOpen(false)}
+                >
+                  Back to sign in
+                </Button>
+              </form>
+            ) : (
+              <>
+                <Button
+                  onClick={handleGoogle}
+                  disabled={loading}
+                  variant="outline"
+                  className="w-full"
+                >
+                  <GoogleIcon /> Continue with Google
+                </Button>
+                <div className="my-4 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  or
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+                <Tabs defaultValue="in">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="in">Sign in</TabsTrigger>
+                    <TabsTrigger value="up">Create account</TabsTrigger>
+                  </TabsList>
+                  {(["in", "up"] as const).map((mode) => (
+                    <TabsContent key={mode} value={mode}>
+                      <form onSubmit={(e) => handleEmail(e, mode)} className="space-y-3">
+                        <div className="space-y-1">
+                          <Label>Email</Label>
+                          <Input name="email" type="email" required />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Password</Label>
+                          <Input name="password" type="password" minLength={6} required />
+                        </div>
+                        <Button type="submit" disabled={loading} className="w-full">
+                          {mode === "in" ? "Sign in" : "Create account"}
+                        </Button>
+                      </form>
+                    </TabsContent>
+                  ))}
+                </Tabs>
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(true)}
+                  className="mt-4 w-full text-center text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Forgot your password?
+                </button>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

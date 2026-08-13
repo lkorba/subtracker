@@ -111,32 +111,17 @@ export function CategoryManager({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Rename + reassign subscriptions atomically in one SECURITY DEFINER RPC.
   const renameCat = useMutation({
-    mutationFn: async ({
-      id,
-      oldName,
-      name,
-      color,
-    }: {
-      id: string;
-      oldName: string;
-      name: string;
-      color: string;
-    }) => {
+    mutationFn: async ({ id, name, color }: { id: string; name: string; color: string }) => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Name required");
-      const { error } = await supabase
-        .from("categories")
-        .update({ name: trimmed, color })
-        .eq("id", id);
+      const { error } = await supabase.rpc("rename_category", {
+        p_id: id,
+        p_name: trimmed,
+        p_color: color,
+      });
       if (error) throw error;
-      if (trimmed !== oldName) {
-        const { error: e2 } = await supabase
-          .from("subscriptions")
-          .update({ category: trimmed })
-          .eq("category", oldName);
-        if (e2) throw e2;
-      }
     },
     onSuccess: () => {
       setEditingId(null);
@@ -148,13 +133,8 @@ export function CategoryManager({
 
   const delCat = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      // Reassign subscriptions in this category to "Other" so nothing is orphaned.
-      const { error: e1 } = await supabase
-        .from("subscriptions")
-        .update({ category: "Other" })
-        .eq("category", name);
-      if (e1) throw e1;
-      const { error } = await supabase.from("categories").delete().eq("id", id);
+      if (name === "Other") throw new Error("Other is the fallback category and cannot be deleted");
+      const { error } = await supabase.rpc("delete_category", { p_id: id });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -164,22 +144,16 @@ export function CategoryManager({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Swap two adjacent categories. The RPC rewrites every sort_order in one
+  // transaction so two rows can never end up sharing a value.
   const reorder = useMutation({
     mutationFn: async ({ index, dir }: { index: number; dir: -1 | 1 }) => {
       const other = index + dir;
       if (other < 0 || other >= categories.length) return;
-      const a = categories[index];
-      const b = categories[other];
-      const { error: e1 } = await supabase
-        .from("categories")
-        .update({ sort_order: b.sort_order })
-        .eq("id", a.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase
-        .from("categories")
-        .update({ sort_order: a.sort_order })
-        .eq("id", b.id);
-      if (e2) throw e2;
+      const ids = categories.map((c) => c.id);
+      [ids[index], ids[other]] = [ids[other], ids[index]];
+      const { error } = await supabase.rpc("reorder_categories", { p_ids: ids });
+      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["categories"] }),
     onError: (e: Error) => toast.error(e.message),
@@ -244,14 +218,7 @@ export function CategoryManager({
                   <Button
                     size="icon"
                     variant="ghost"
-                    onClick={() =>
-                      renameCat.mutate({
-                        id: c.id,
-                        oldName: c.name,
-                        name: editName,
-                        color: editColor,
-                      })
-                    }
+                    onClick={() => renameCat.mutate({ id: c.id, name: editName, color: editColor })}
                     aria-label="Save"
                   >
                     <Check className="h-4 w-4" />

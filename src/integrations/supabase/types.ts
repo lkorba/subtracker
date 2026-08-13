@@ -97,7 +97,26 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      rename_category: {
+        Args: {
+          p_id: string;
+          p_name: string;
+          p_color: string;
+        };
+        Returns: undefined;
+      };
+      delete_category: {
+        Args: {
+          p_id: string;
+        };
+        Returns: undefined;
+      };
+      reorder_categories: {
+        Args: {
+          p_ids: string[];
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       [_ in never]: never;

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,10 +21,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { Plus, Trash2, Wallet, LogOut, ExternalLink, Pencil, Tags } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Wallet,
+  LogOut,
+  ExternalLink,
+  Pencil,
+  Tags,
+  Settings,
+  Search,
+  Sun,
+  Moon,
+} from "lucide-react";
 import { toast } from "sonner";
+import { addDays, addMonths, format, isBefore, parseISO, startOfDay } from "date-fns";
 import {
   CATEGORY_COLORS as DEFAULT_CATEGORY_COLORS,
   PRESETS,
@@ -37,6 +60,7 @@ import {
   type PlanOption,
 } from "@/lib/subscription-presets";
 import { CategoryManager, useCategories } from "@/components/category-manager";
+import { AccountSettings } from "@/components/account-settings";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
@@ -52,17 +76,59 @@ type Sub = {
   notes: string | null;
   url: string | null;
   plan: string | null;
+  created_at: string;
 };
 
-function faviconFor(url: string | null | undefined): string | null {
+function safeUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const u = new URL(url);
-    return `https://www.google.com/s2/favicons?sz=64&domain=${u.hostname}`;
+    return u.protocol === "https:" || u.protocol === "http:" ? url : null;
   } catch {
     return null;
   }
 }
+
+function faviconFor(url: string | null | undefined): string | null {
+  const u = safeUrl(url);
+  if (!u) return null;
+  try {
+    return `https://www.google.com/s2/favicons?sz=64&domain=${new URL(u).hostname}`;
+  } catch {
+    return null;
+  }
+}
+
+// Display-only roll-forward: if the stored next billing date is in the past,
+// project it forward by the billing cycle instead of showing a stale date.
+// Nothing is persisted until the user edits the row.
+function effectiveNextDate(s: Sub): { label: string; overdue: boolean } | null {
+  if (!s.next_billing_date) return null;
+  let d = startOfDay(parseISO(s.next_billing_date));
+  if (isNaN(d.getTime())) return null;
+  const today = startOfDay(new Date());
+  if (!isBefore(d, today)) return { label: format(d, "yyyy-MM-dd"), overdue: false };
+  let guard = 0;
+  while (isBefore(d, today) && guard < 100) {
+    switch (s.billing_cycle) {
+      case "weekly":
+        d = addDays(d, 7);
+        break;
+      case "quarterly":
+        d = addMonths(d, 3);
+        break;
+      case "yearly":
+        d = addMonths(d, 12);
+        break;
+      default:
+        d = addMonths(d, 1);
+    }
+    guard++;
+  }
+  return { label: `${format(d, "yyyy-MM-dd")} (est.)`, overdue: true };
+}
+
+type SortKey = "created" | "name" | "cost" | "next";
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -71,12 +137,17 @@ function Dashboard() {
   const CATEGORY_COLORS: Record<string, string> = { ...DEFAULT_CATEGORY_COLORS, ...colorMap };
   const [open, setOpen] = useState(false);
   const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [preset, setPreset] = useState<Preset | null>(null);
   const [editing, setEditing] = useState<Sub | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Sub | null>(null);
   const [selectedPlanIdx, setSelectedPlanIdx] = useState(0);
   const [currency, setCurrency] = useState("USD");
   const [billingCycle, setBillingCycle] = useState("monthly");
   const [urlValue, setUrlValue] = useState("");
+  const [costStr, setCostStr] = useState("");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("created");
 
   const { data: subs = [], isLoading } = useQuery({
     queryKey: ["subscriptions"],
@@ -91,7 +162,7 @@ function Dashboard() {
   });
 
   const addMutation = useMutation({
-    mutationFn: async (input: Omit<Sub, "id"> & { user_id: string }) => {
+    mutationFn: async (input: Omit<Sub, "id" | "created_at"> & { user_id: string }) => {
       const { error } = await supabase.from("subscriptions").insert(input);
       if (error) throw error;
     },
@@ -125,8 +196,10 @@ function Dashboard() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      toast.success("Removed");
+      setDeleteTarget(null);
+      toast.success("Subscription removed");
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const totals = useMemo(() => {
@@ -146,6 +219,39 @@ function Dashboard() {
     return { monthly, annual: monthly * 12, chartData };
   }, [subs]);
 
+  const visibleSubs = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const out = q
+      ? subs.filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) ||
+            s.category.toLowerCase().includes(q) ||
+            (s.plan ?? "").toLowerCase().includes(q),
+        )
+      : [...subs];
+    switch (sortBy) {
+      case "name":
+        out.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case "cost":
+        out.sort(
+          (a, b) =>
+            monthlyAmountInUsd(Number(b.cost), b.billing_cycle, b.currency) -
+            monthlyAmountInUsd(Number(a.cost), a.billing_cycle, a.currency),
+        );
+        break;
+      case "next":
+        out.sort((a, b) =>
+          (a.next_billing_date ?? "9999").localeCompare(b.next_billing_date ?? "9999"),
+        );
+        break;
+      default:
+        // "created": API order is already created_at desc
+        break;
+    }
+    return out;
+  }, [subs, query, sortBy]);
+
   const handleSignOut = async () => {
     await qc.cancelQueries();
     qc.clear();
@@ -160,6 +266,7 @@ function Dashboard() {
     setCurrency("USD");
     setBillingCycle(p.plans[0]?.billing_cycle ?? "monthly");
     setUrlValue(p.url ?? "");
+    setCostStr(p.plans[0] ? String(p.plans[0].cost) : "");
     setOpen(true);
   };
   const openBlank = () => {
@@ -169,6 +276,7 @@ function Dashboard() {
     setCurrency("USD");
     setBillingCycle("monthly");
     setUrlValue("");
+    setCostStr("");
     setOpen(true);
   };
   const openEdit = (s: Sub) => {
@@ -177,6 +285,7 @@ function Dashboard() {
     setCurrency(s.currency);
     setBillingCycle(s.billing_cycle);
     setUrlValue(s.url ?? "");
+    setCostStr(String(s.cost));
     const p = PRESETS.find((pp) => pp.name.toLowerCase() === s.name.toLowerCase());
     const idx = p
       ? Math.max(
@@ -194,10 +303,15 @@ function Dashboard() {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const category = String(fd.get("category"));
+    const cost = Number(costStr);
+    if (!Number.isFinite(cost) || cost < 0) {
+      toast.error("Enter a valid cost");
+      return;
+    }
     const base = {
       name: String(fd.get("name")),
       category,
-      cost: Number(fd.get("cost")),
+      cost,
       currency: String(fd.get("currency")),
       billing_cycle: String(fd.get("billing_cycle")),
       next_billing_date: (fd.get("next_billing_date") as string) || null,
@@ -240,7 +354,16 @@ function Dashboard() {
             <Button onClick={openBlank}>
               <Plus className="mr-1 h-4 w-4" /> Add subscription
             </Button>
-            <Button variant="ghost" onClick={handleSignOut}>
+            <ThemeToggle />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleSignOut} aria-label="Sign out">
               <LogOut className="h-4 w-4" />
             </Button>
           </div>
@@ -284,7 +407,7 @@ function Dashboard() {
                     <Legend
                       formatter={(name: string) => {
                         const item = totals.chartData.find((d) => d.name === name);
-                        return item ? `${name} — $${item.value.toFixed(2)}/mo` : name;
+                        return item ? `${name} - $${item.value.toFixed(2)}/mo` : name;
                       }}
                     />
                   </PieChart>
@@ -300,7 +423,7 @@ function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="grid max-h-[260px] grid-cols-2 gap-2 overflow-y-auto pr-1">
-                {PRESETS.slice(0, 18).map((p) => {
+                {PRESETS.map((p) => {
                   const fav = faviconFor(p.url);
                   return (
                     <button
@@ -326,7 +449,29 @@ function Dashboard() {
         </section>
 
         <section>
-          <h2 className="font-display mb-4 text-3xl">Your subscriptions</h2>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <h2 className="font-display mr-auto text-3xl">Your subscriptions</h2>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name, category or plan"
+                className="w-64 pl-8"
+              />
+            </div>
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortKey)}>
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="created">Newest first</SelectItem>
+                <SelectItem value="name">Name A-Z</SelectItem>
+                <SelectItem value="cost">Cost, highest</SelectItem>
+                <SelectItem value="next">Next billing soonest</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : subs.length === 0 ? (
@@ -335,85 +480,103 @@ function Dashboard() {
                 Nothing yet. Add your first subscription above.
               </p>
             </Card>
+          ) : visibleSubs.length === 0 ? (
+            <Card className="p-10 text-center">
+              <p className="text-muted-foreground">No subscriptions match your search.</p>
+            </Card>
           ) : (
-            <div className="grid gap-3">
-              {subs.map((s) => {
-                const mo = monthlyAmount(Number(s.cost), s.billing_cycle);
-                const fav = faviconFor(s.url);
-                return (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)]"
-                  >
+            <>
+              <div className="grid gap-3">
+                {visibleSubs.map((s) => {
+                  const mo = monthlyAmount(Number(s.cost), s.billing_cycle);
+                  const fav = faviconFor(s.url);
+                  const nd = effectiveNextDate(s);
+                  const link = safeUrl(s.url);
+                  return (
                     <div
-                      className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white"
-                      style={{ background: s.color || CATEGORY_COLORS[s.category] }}
+                      key={s.id}
+                      className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)]"
                     >
-                      {fav ? (
-                        <img
-                          src={fav}
-                          alt=""
-                          className="h-7 w-7 rounded"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        s.name.slice(0, 1)
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{s.name}</span>
-                        {s.plan && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                            {s.plan}
+                      <div
+                        className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white"
+                        style={{ background: s.color || CATEGORY_COLORS[s.category] }}
+                      >
+                        {fav ? (
+                          <img
+                            src={fav}
+                            alt=""
+                            className="h-7 w-7 rounded"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          s.name.slice(0, 1)
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{s.name}</span>
+                          {s.plan && (
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                              {s.plan}
+                            </span>
+                          )}
+                          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+                            {s.category}
                           </span>
-                        )}
-                        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
-                          {s.category}
-                        </span>
-                        {s.url && (
-                          <a
-                            href={s.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                          >
-                            <ExternalLink className="h-3 w-3" /> visit
-                          </a>
-                        )}
+                          {nd?.overdue && (
+                            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400">
+                              past due
+                            </span>
+                          )}
+                          {link && (
+                            <a
+                              href={link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" /> visit
+                            </a>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatMoney(Number(s.cost), s.currency)} {s.currency} / {s.billing_cycle}
+                          {nd && ` · next ${nd.label}`}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatMoney(Number(s.cost), s.currency)} {s.currency} / {s.billing_cycle}
-                        {s.next_billing_date && ` · next ${s.next_billing_date}`}
+                      <div className="text-right">
+                        <div className="font-display text-xl">{formatMoney(mo, s.currency)}</div>
+                        <div className="text-xs text-muted-foreground">per month</div>
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openEdit(s)}
+                        aria-label="Edit"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setDeleteTarget(s)}
+                        aria-label="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="text-right">
-                      <div className="font-display text-xl">{formatMoney(mo, s.currency)}</div>
-                      <div className="text-xs text-muted-foreground">per month</div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(s)}
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => delMutation.mutate(s.id)}
-                      aria-label="Delete"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+              {query && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Showing {visibleSubs.length} of {subs.length} subscriptions
+                </p>
+              )}
+            </>
           )}
         </section>
       </main>
@@ -468,10 +631,10 @@ function Dashboard() {
                         const idx = Number(v);
                         setSelectedPlanIdx(idx);
                         const p = activePreset.plans[idx];
-                        if (p?.billing_cycle) setBillingCycle(p.billing_cycle);
-                        const costInput =
-                          document.querySelector<HTMLInputElement>('input[name="cost"]');
-                        if (costInput && p) costInput.value = String(p.cost);
+                        if (p) {
+                          setCostStr(String(p.cost));
+                          if (p.billing_cycle) setBillingCycle(p.billing_cycle);
+                        }
                       }}
                     >
                       <SelectTrigger>
@@ -480,7 +643,7 @@ function Dashboard() {
                       <SelectContent>
                         {activePreset.plans.map((p, i) => (
                           <SelectItem key={p.name} value={String(i)}>
-                            {p.name} — ${p.cost}/{p.billing_cycle ?? "monthly"}
+                            {p.name} - ${p.cost}/{p.billing_cycle ?? "monthly"}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -509,12 +672,13 @@ function Dashboard() {
               <div className="space-y-1 col-span-1">
                 <Label>Cost</Label>
                 <Input
-                  key={editing?.id ?? `${preset?.name}-${selectedPlanIdx}`}
                   name="cost"
                   type="number"
                   step="0.01"
                   min="0"
-                  defaultValue={editing?.cost ?? currentPlan?.cost}
+                  value={costStr}
+                  onChange={(e) => setCostStr(e.target.value)}
+                  placeholder="0.00"
                   required
                 />
               </div>
@@ -635,8 +799,57 @@ function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the subscription permanently. There is no undo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (deleteTarget) delMutation.mutate(deleteTarget.id);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <CategoryManager open={catManagerOpen} onOpenChange={setCatManagerOpen} />
+      <AccountSettings
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onSignOut={handleSignOut}
+      />
     </div>
+  );
+}
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    const stored = localStorage.getItem("subtracker-theme");
+    const prefers = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initial = stored ? stored === "dark" : prefers;
+    setDark(initial);
+    document.documentElement.classList.toggle("dark", initial);
+  }, []);
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    localStorage.setItem("subtracker-theme", next ? "dark" : "light");
+  };
+  return (
+    <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
+      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </Button>
   );
 }
 
