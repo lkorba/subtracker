@@ -6,8 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Plus, Trash2, Wallet, LogOut, ExternalLink, Pencil, Tags } from "lucide-react";
@@ -68,7 +81,10 @@ function Dashboard() {
   const { data: subs = [], isLoading } = useQuery({
     queryKey: ["subscriptions"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("subscriptions").select("*").order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .select("*")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Sub[];
     },
@@ -79,7 +95,12 @@ function Dashboard() {
       const { error } = await supabase.from("subscriptions").insert(input);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["subscriptions"] }); setOpen(false); setPreset(null); toast.success("Subscription added"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      setOpen(false);
+      setPreset(null);
+      toast.success("Subscription added");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -88,7 +109,12 @@ function Dashboard() {
       const { error } = await supabase.from("subscriptions").update(patch).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["subscriptions"] }); setOpen(false); setEditing(null); toast.success("Subscription updated"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      setOpen(false);
+      setEditing(null);
+      toast.success("Subscription updated");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -97,17 +123,26 @@ function Dashboard() {
       const { error } = await supabase.from("subscriptions").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["subscriptions"] }); toast.success("Removed"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      toast.success("Removed");
+    },
   });
 
   const totals = useMemo(() => {
-    const monthly = subs.reduce((s, x) => s + monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency), 0);
+    const monthly = subs.reduce(
+      (s, x) => s + monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency),
+      0,
+    );
     const byCat: Record<string, number> = {};
     subs.forEach((x) => {
       const m = monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency);
       byCat[x.category] = (byCat[x.category] || 0) + m;
     });
-    const chartData = Object.entries(byCat).map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
+    const chartData = Object.entries(byCat).map(([name, value]) => ({
+      name,
+      value: Number(value.toFixed(2)),
+    }));
     return { monthly, annual: monthly * 12, chartData };
   }, [subs]);
 
@@ -143,7 +178,12 @@ function Dashboard() {
     setBillingCycle(s.billing_cycle);
     setUrlValue(s.url ?? "");
     const p = PRESETS.find((pp) => pp.name.toLowerCase() === s.name.toLowerCase());
-    const idx = p ? Math.max(0, p.plans.findIndex((pl) => pl.name === s.plan)) : 0;
+    const idx = p
+      ? Math.max(
+          0,
+          p.plans.findIndex((pl) => pl.name === s.plan),
+        )
+      : 0;
     setSelectedPlanIdx(idx);
     setOpen(true);
   };
@@ -188,15 +228,22 @@ function Dashboard() {
       <header className="border-b bg-card/50 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground"><Wallet className="h-4 w-4" /></div>
+            <div className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground">
+              <Wallet className="h-4 w-4" />
+            </div>
             <span className="font-display text-2xl">Subtracker</span>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setCatManagerOpen(true)}><Tags className="mr-1 h-4 w-4" /> Categories</Button>
-            <Button onClick={openBlank}><Plus className="mr-1 h-4 w-4" /> Add subscription</Button>
-            <Button variant="ghost" onClick={handleSignOut}><LogOut className="h-4 w-4" /></Button>
+            <Button variant="outline" onClick={() => setCatManagerOpen(true)}>
+              <Tags className="mr-1 h-4 w-4" /> Categories
+            </Button>
+            <Button onClick={openBlank}>
+              <Plus className="mr-1 h-4 w-4" /> Add subscription
+            </Button>
+            <Button variant="ghost" onClick={handleSignOut}>
+              <LogOut className="h-4 w-4" />
+            </Button>
           </div>
-
         </div>
       </header>
 
@@ -229,15 +276,18 @@ function Dashboard() {
                       label={({ name, value }) => `${name}: $${Number(value).toFixed(2)}`}
                       labelLine={{ stroke: "hsl(var(--muted-foreground))" }}
                     >
-                      {totals.chartData.map((e) => (<Cell key={e.name} fill={CATEGORY_COLORS[e.name] || "#94a3b8"} />))}
+                      {totals.chartData.map((e) => (
+                        <Cell key={e.name} fill={CATEGORY_COLORS[e.name] || "#94a3b8"} />
+                      ))}
                     </Pie>
                     <Tooltip formatter={(v: number) => `$${v.toFixed(2)}/mo`} />
-                    <Legend formatter={(name: string) => {
-                      const item = totals.chartData.find((d) => d.name === name);
-                      return item ? `${name} — $${item.value.toFixed(2)}/mo` : name;
-                    }} />
+                    <Legend
+                      formatter={(name: string) => {
+                        const item = totals.chartData.find((d) => d.name === name);
+                        return item ? `${name} — $${item.value.toFixed(2)}/mo` : name;
+                      }}
+                    />
                   </PieChart>
-
                 </ResponsiveContainer>
               )}
             </CardContent>
@@ -253,11 +303,18 @@ function Dashboard() {
                 {PRESETS.slice(0, 18).map((p) => {
                   const fav = faviconFor(p.url);
                   return (
-                    <button key={p.name} onClick={() => openWithPreset(p)} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-left text-sm transition hover:bg-muted">
+                    <button
+                      key={p.name}
+                      onClick={() => openWithPreset(p)}
+                      className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-left text-sm transition hover:bg-muted"
+                    >
                       {fav ? (
                         <img src={fav} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
                       ) : (
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: p.color }} />
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ background: p.color }}
+                        />
                       )}
                       <span className="truncate">{p.name}</span>
                     </button>
@@ -273,22 +330,34 @@ function Dashboard() {
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : subs.length === 0 ? (
-            <Card className="p-10 text-center"><p className="text-muted-foreground">Nothing yet. Add your first subscription above.</p></Card>
+            <Card className="p-10 text-center">
+              <p className="text-muted-foreground">
+                Nothing yet. Add your first subscription above.
+              </p>
+            </Card>
           ) : (
             <div className="grid gap-3">
               {subs.map((s) => {
                 const mo = monthlyAmount(Number(s.cost), s.billing_cycle);
                 const fav = faviconFor(s.url);
                 return (
-                  <div key={s.id} className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)]">
-                    <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white" style={{ background: s.color || CATEGORY_COLORS[s.category] }}>
+                  <div
+                    key={s.id}
+                    className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)]"
+                  >
+                    <div
+                      className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white"
+                      style={{ background: s.color || CATEGORY_COLORS[s.category] }}
+                    >
                       {fav ? (
                         <img
                           src={fav}
                           alt=""
                           className="h-7 w-7 rounded"
                           loading="lazy"
-                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
                         />
                       ) : (
                         s.name.slice(0, 1)
@@ -297,10 +366,21 @@ function Dashboard() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{s.name}</span>
-                        {s.plan && <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{s.plan}</span>}
-                        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">{s.category}</span>
+                        {s.plan && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                            {s.plan}
+                          </span>
+                        )}
+                        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+                          {s.category}
+                        </span>
                         {s.url && (
-                          <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                          <a
+                            href={s.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          >
                             <ExternalLink className="h-3 w-3" /> visit
                           </a>
                         )}
@@ -314,8 +394,22 @@ function Dashboard() {
                       <div className="font-display text-xl">{formatMoney(mo, s.currency)}</div>
                       <div className="text-xs text-muted-foreground">per month</div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(s)} aria-label="Edit"><Pencil className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" onClick={() => delMutation.mutate(s.id)} aria-label="Delete"><Trash2 className="h-4 w-4" /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openEdit(s)}
+                      aria-label="Edit"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => delMutation.mutate(s.id)}
+                      aria-label="Delete"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 );
               })}
@@ -324,21 +418,46 @@ function Dashboard() {
         </section>
       </main>
 
-      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEditing(null); setPreset(null); } }}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) {
+            setEditing(null);
+            setPreset(null);
+          }
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl">
-              {editing ? `Edit ${editing.name}` : preset ? `Add ${preset.name}` : "Add subscription"}
+              {editing
+                ? `Edit ${editing.name}`
+                : preset
+                  ? `Add ${preset.name}`
+                  : "Add subscription"}
             </DialogTitle>
             <DialogDescription>
               {editing ? "Update this subscription." : "Track a new recurring charge."}
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-3" key={editing?.id ?? preset?.name ?? "blank"}>
-            <div className="space-y-1"><Label>Name</Label><Input name="name" defaultValue={editing?.name ?? preset?.name} required /></div>
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-3"
+            key={editing?.id ?? preset?.name ?? "blank"}
+          >
+            <div className="space-y-1">
+              <Label>Name</Label>
+              <Input name="name" defaultValue={editing?.name ?? preset?.name} required />
+            </div>
 
             {(() => {
-              const activePreset = preset ?? (editing ? PRESETS.find((p) => p.name.toLowerCase() === editing.name.toLowerCase()) ?? null : null);
+              const activePreset =
+                preset ??
+                (editing
+                  ? (PRESETS.find((p) => p.name.toLowerCase() === editing.name.toLowerCase()) ??
+                    null)
+                  : null);
               if (activePreset && activePreset.plans.length > 1) {
                 return (
                   <div className="space-y-1">
@@ -350,11 +469,14 @@ function Dashboard() {
                         setSelectedPlanIdx(idx);
                         const p = activePreset.plans[idx];
                         if (p?.billing_cycle) setBillingCycle(p.billing_cycle);
-                        const costInput = document.querySelector<HTMLInputElement>('input[name="cost"]');
+                        const costInput =
+                          document.querySelector<HTMLInputElement>('input[name="cost"]');
                         if (costInput && p) costInput.value = String(p.cost);
                       }}
                     >
-                      <SelectTrigger><SelectValue placeholder="Choose a tier" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose a tier" />
+                      </SelectTrigger>
                       <SelectContent>
                         {activePreset.plans.map((p, i) => (
                           <SelectItem key={p.name} value={String(i)}>
@@ -363,12 +485,23 @@ function Dashboard() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <input type="hidden" name="plan" value={activePreset.plans[selectedPlanIdx]?.name ?? editing?.plan ?? ""} />
+                    <input
+                      type="hidden"
+                      name="plan"
+                      value={activePreset.plans[selectedPlanIdx]?.name ?? editing?.plan ?? ""}
+                    />
                   </div>
                 );
               }
               return (
-                <div className="space-y-1"><Label>Plan (optional)</Label><Input name="plan" placeholder="e.g. Family, Pro, Student" defaultValue={editing?.plan ?? ""} /></div>
+                <div className="space-y-1">
+                  <Label>Plan (optional)</Label>
+                  <Input
+                    name="plan"
+                    placeholder="e.g. Family, Pro, Student"
+                    defaultValue={editing?.plan ?? ""}
+                  />
+                </div>
               );
             })()}
 
@@ -388,10 +521,14 @@ function Dashboard() {
               <div className="space-y-1 col-span-1">
                 <Label>Currency</Label>
                 <Select name="currency" value={currency} onValueChange={setCurrency}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent className="max-h-64">
                     {CURRENCIES.map((c) => (
-                      <SelectItem key={c} value={c}>{c} {CURRENCY_SYMBOLS[c] ? `(${CURRENCY_SYMBOLS[c]})` : ""}</SelectItem>
+                      <SelectItem key={c} value={c}>
+                        {c} {CURRENCY_SYMBOLS[c] ? `(${CURRENCY_SYMBOLS[c]})` : ""}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -399,7 +536,9 @@ function Dashboard() {
               <div className="space-y-1 col-span-1">
                 <Label>Billing</Label>
                 <Select name="billing_cycle" value={billingCycle} onValueChange={setBillingCycle}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="weekly">Weekly</SelectItem>
                     <SelectItem value="monthly">Monthly</SelectItem>
@@ -414,31 +553,80 @@ function Dashboard() {
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <Label>Category</Label>
-                  <button type="button" onClick={() => setCatManagerOpen(true)} className="text-xs text-primary hover:underline">Manage</button>
+                  <button
+                    type="button"
+                    onClick={() => setCatManagerOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Manage
+                  </button>
                 </div>
-                <Select name="category" defaultValue={editing?.category ?? preset?.category ?? categories[0]?.name ?? "Other"}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  name="category"
+                  defaultValue={
+                    editing?.category ?? preset?.category ?? categories[0]?.name ?? "Other"
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    {categories.map((c) => (<SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>))}
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={c.name}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1"><Label>Next billing</Label><Input name="next_billing_date" type="date" defaultValue={editing?.next_billing_date ?? ""} /></div>
+              <div className="space-y-1">
+                <Label>Next billing</Label>
+                <Input
+                  name="next_billing_date"
+                  type="date"
+                  defaultValue={editing?.next_billing_date ?? ""}
+                />
+              </div>
             </div>
-
 
             <div className="space-y-1">
               <Label>Website URL</Label>
               <div className="flex items-center gap-2">
                 {faviconFor(urlValue) && (
-                  <img src={faviconFor(urlValue)!} alt="" className="h-5 w-5 rounded-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+                  <img
+                    src={faviconFor(urlValue)!}
+                    alt=""
+                    className="h-5 w-5 rounded-sm"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
                 )}
-                <Input name="url" type="url" placeholder="https://…" value={urlValue} onChange={(e) => setUrlValue(e.target.value)} />
+                <Input
+                  name="url"
+                  type="url"
+                  placeholder="https://…"
+                  value={urlValue}
+                  onChange={(e) => setUrlValue(e.target.value)}
+                />
               </div>
             </div>
-            <div className="space-y-1"><Label>Notes</Label><Textarea name="notes" rows={2} defaultValue={editing?.notes ?? ""} /></div>
+            <div className="space-y-1">
+              <Label>Notes</Label>
+              <Textarea name="notes" rows={2} defaultValue={editing?.notes ?? ""} />
+            </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => { setOpen(false); setEditing(null); setPreset(null); }}>Cancel</Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setOpen(false);
+                  setEditing(null);
+                  setPreset(null);
+                }}
+              >
+                Cancel
+              </Button>
               <Button type="submit" disabled={addMutation.isPending || updateMutation.isPending}>
                 {editing ? "Save" : "Add"}
               </Button>
@@ -452,14 +640,24 @@ function Dashboard() {
   );
 }
 
-function StatCard({ label, value, accent, raw }: { label: string; value: number; accent?: boolean; raw?: boolean }) {
+function StatCard({
+  label,
+  value,
+  accent,
+  raw,
+}: {
+  label: string;
+  value: number;
+  accent?: boolean;
+  raw?: boolean;
+}) {
   return (
-    <Card className={`shadow-[var(--shadow-soft)] ${accent ? "bg-primary text-primary-foreground" : ""}`}>
+    <Card
+      className={`shadow-[var(--shadow-soft)] ${accent ? "bg-primary text-primary-foreground" : ""}`}
+    >
       <CardContent className="p-6">
         <div className={`text-sm ${accent ? "opacity-80" : "text-muted-foreground"}`}>{label}</div>
-        <div className="font-display mt-1 text-5xl">
-          {raw ? value : `$${value.toFixed(2)}`}
-        </div>
+        <div className="font-display mt-1 text-5xl">{raw ? value : `$${value.toFixed(2)}`}</div>
       </CardContent>
     </Card>
   );
@@ -470,7 +668,9 @@ function EmptyChart({ onAdd }: { onAdd: () => void }) {
     <div className="grid h-full place-items-center text-center">
       <div>
         <p className="text-sm text-muted-foreground">Add a subscription to see your breakdown.</p>
-        <Button className="mt-3" onClick={onAdd}><Plus className="mr-1 h-4 w-4" /> Add one</Button>
+        <Button className="mt-3" onClick={onAdd}>
+          <Plus className="mr-1 h-4 w-4" /> Add one
+        </Button>
       </div>
     </div>
   );
