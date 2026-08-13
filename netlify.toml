@@ -29,6 +29,15 @@
   status = 200
   force = false
 
+  # Security headers for proxied responses: Netlify does NOT apply
+  # [[headers]] rules to rewritten responses, so they must live here.
+  [redirects.headers]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy-Report-Only = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://www.google.com https:; connect-src 'self' https://tuvqxwyqrgsowirmmyhp.supabase.co https://*.supabase.co https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors 'none'"
+
 # Cache static assets aggressively
 [[headers]]
   for = "/assets/*"
