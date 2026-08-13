@@ -23,10 +23,8 @@ function AuthPage() {
 
   const handleGoogle = async () => {
     setLoading(true);
-    // Use Supabase's native OAuth (the lovable wrapper required the Lovable
-    // platform's Cloud Auth, which we don't have on a vanilla Supabase project).
-    // The redirect URL must be in the Supabase allow-list AND Google Cloud's
-    // authorized redirect URIs list.
+    // Supabase's native OAuth flow. The redirect URL must be in the Supabase
+    // allow-list AND Google Cloud's authorized redirect URIs list.
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {

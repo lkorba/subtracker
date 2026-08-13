@@ -1,20 +1,61 @@
-// @lovable.dev/vite-tanstack-config already includes the following — do NOT add them manually
-// or the app will break with duplicate plugins:
-//   - tanstackStart, viteReact, tailwindcss, tsConfigPaths, nitro (build-only using cloudflare as a default target),
-//     componentTagger (dev-only), VITE_* env injection, @ path alias, React/TanStack dedupe,
-//     error logger plugins, and sandbox detection (port/host/strictPort).
-// You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { defineConfig } from "vite";
+import viteReact from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import tsConfigPaths from "vite-tsconfig-paths";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import { nitro } from "nitro/vite";
 
+// Vanilla Vite config for TanStack Start + Nitro on Netlify.
+// Plugin order mirrors the original build: tailwind -> tsconfig paths ->
+// tanstack start -> nitro (build-only, netlify preset) -> react.
 export default defineConfig({
-  tanstackStart: {
-    // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
-    server: { entry: "server" },
+  plugins: [
+    tailwindcss(),
+    tsConfigPaths({ projects: ["./tsconfig.json"] }),
+    tanstackStart({
+      importProtection: {
+        behavior: "error",
+        client: {
+          files: ["**/server/**"],
+          specifiers: ["server-only"],
+        },
+      },
+      // Redirect TanStack Start's bundled server entry to src/server.ts
+      // (our SSR error wrapper). nitro/vite builds from this.
+      server: { entry: "server" },
+    }),
+    nitro({ preset: "netlify" }),
+    viteReact(),
+  ],
+  resolve: {
+    alias: {
+      "@": `${process.cwd()}/src`,
+    },
+    // React + TanStack must resolve to a single copy across client/server
+    // bundles or hydration crashes.
+    dedupe: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+      "@tanstack/react-query",
+      "@tanstack/query-core",
+    ],
   },
-  // Override the default cloudflare-module preset to target Netlify Functions.
-  // This makes `vite build` produce a server bundle that Netlify can run.
-  nitro: {
-    preset: "netlify",
+  // Pre-bundle the always-present client deps. React core only - including
+  // @tanstack/react-start here would pull its node:async_hooks server entry
+  // into the client bundle and crash hydration.
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
+    ignoreOutdatedRequests: true,
+  },
+  server: {
+    port: 8080,
   },
 });
