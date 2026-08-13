@@ -25,6 +25,7 @@ export function AccountSettings({
   const [email, setEmail] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -47,11 +48,15 @@ export function AccountSettings({
   };
 
   const changePassword = async () => {
+    if (password !== confirmPassword) {
+      return toast.error("Passwords do not match");
+    }
     setBusy(true);
     const { error } = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (error) return toast.error(error.message);
     setPassword("");
+    setConfirmPassword("");
     toast.success("Password updated");
   };
 
@@ -106,7 +111,7 @@ export function AccountSettings({
 
           <div className="space-y-2 border-t pt-4">
             <Label>Change password</Label>
-            <div className="flex gap-2">
+            <div className="space-y-2">
               <Input
                 type="password"
                 placeholder="New password (min 6 characters)"
@@ -114,11 +119,31 @@ export function AccountSettings({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              <Input
+                type="password"
+                placeholder="Repeat new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                aria-invalid={confirmPassword.length > 0 && confirmPassword !== password}
+                className={
+                  confirmPassword.length > 0 && confirmPassword !== password
+                    ? "border-destructive focus-visible:ring-destructive"
+                    : ""
+                }
+              />
+              {confirmPassword.length > 0 && confirmPassword !== password && (
+                <p className="text-xs text-destructive">Passwords do not match</p>
+              )}
               <Button
                 variant="outline"
-                disabled={busy || password.length < 6}
+                disabled={
+                  busy ||
+                  password.length < 6 ||
+                  confirmPassword.length === 0 ||
+                  password !== confirmPassword
+                }
                 onClick={changePassword}
-                className="shrink-0"
+                className="w-full"
               >
                 Update
               </Button>
