@@ -38,6 +38,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Editor sandbox metadata
-.lovable
