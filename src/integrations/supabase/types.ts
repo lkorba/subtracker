@@ -10,6 +10,7 @@ export type Database = {
     Tables: {
       categories: {
         Row: {
+          budget: number | null;
           color: string;
           created_at: string;
           id: string;
@@ -19,6 +20,7 @@ export type Database = {
           user_id: string;
         };
         Insert: {
+          budget?: number | null;
           color?: string;
           created_at?: string;
           id?: string;
@@ -28,12 +30,40 @@ export type Database = {
           user_id: string;
         };
         Update: {
+          budget?: number | null;
           color?: string;
           created_at?: string;
           id?: string;
           name?: string;
           sort_order?: number;
           updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      price_history: {
+        Row: {
+          changed_at: string;
+          cost: number;
+          currency: string;
+          id: string;
+          subscription_id: string;
+          user_id: string;
+        };
+        Insert: {
+          changed_at?: string;
+          cost: number;
+          currency?: string;
+          id?: string;
+          subscription_id: string;
+          user_id: string;
+        };
+        Update: {
+          changed_at?: string;
+          cost?: number;
+          currency?: string;
+          id?: string;
+          subscription_id?: string;
           user_id?: string;
         };
         Relationships: [];
@@ -52,6 +82,8 @@ export type Database = {
           next_billing_date: string | null;
           notes: string | null;
           plan: string | null;
+          status: string;
+          trial_ends: string | null;
           updated_at: string;
           url: string | null;
           user_id: string;
@@ -69,6 +101,8 @@ export type Database = {
           next_billing_date?: string | null;
           notes?: string | null;
           plan?: string | null;
+          status?: string;
+          trial_ends?: string | null;
           updated_at?: string;
           url?: string | null;
           user_id: string;
@@ -86,6 +120,8 @@ export type Database = {
           next_billing_date?: string | null;
           notes?: string | null;
           plan?: string | null;
+          status?: string;
+          trial_ends?: string | null;
           updated_at?: string;
           url?: string | null;
           user_id?: string;

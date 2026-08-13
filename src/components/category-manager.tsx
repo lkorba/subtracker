@@ -23,6 +23,7 @@ export type Category = {
   name: string;
   color: string;
   sort_order: number;
+  budget: number | null;
 };
 
 export function useCategories() {
@@ -32,7 +33,7 @@ export function useCategories() {
     queryFn: async (): Promise<Category[]> => {
       const { data, error } = await supabase
         .from("categories")
-        .select("id,name,color,sort_order")
+        .select("id,name,color,sort_order,budget")
         .order("sort_order", { ascending: true });
       if (error) throw error;
       return data as Category[];
@@ -82,6 +83,7 @@ export function CategoryManager({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState("#94a3b8");
+  const [editBudget, setEditBudget] = useState("");
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["categories"] });
@@ -111,17 +113,37 @@ export function CategoryManager({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Rename + reassign subscriptions atomically in one SECURITY DEFINER RPC.
+  // Rename + reassign subscriptions atomically in one SECURITY DEFINER RPC;
+  // the budget is a separate single-row update.
   const renameCat = useMutation({
-    mutationFn: async ({ id, name, color }: { id: string; name: string; color: string }) => {
+    mutationFn: async ({
+      id,
+      name,
+      color,
+      budget,
+    }: {
+      id: string;
+      name: string;
+      color: string;
+      budget: string;
+    }) => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Name required");
+      const budgetNum = budget.trim() === "" ? null : Number(budget);
+      if (budgetNum !== null && (!Number.isFinite(budgetNum) || budgetNum < 0)) {
+        throw new Error("Budget must be a non-negative number");
+      }
       const { error } = await supabase.rpc("rename_category", {
         p_id: id,
         p_name: trimmed,
         p_color: color,
       });
       if (error) throw error;
+      const { error: bErr } = await supabase
+        .from("categories")
+        .update({ budget: budgetNum })
+        .eq("id", id);
+      if (bErr) throw bErr;
     },
     onSuccess: () => {
       setEditingId(null);
@@ -163,6 +185,7 @@ export function CategoryManager({
     setEditingId(c.id);
     setEditName(c.name);
     setEditColor(c.color);
+    setEditBudget(c.budget != null ? String(c.budget) : "");
   };
 
   return (
@@ -209,16 +232,34 @@ export function CategoryManager({
                     onChange={(e) => setEditColor(e.target.value)}
                     className="h-8 w-8 shrink-0 cursor-pointer rounded border"
                   />
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="flex-1"
-                    autoFocus
-                  />
+                  <div className="flex-1 space-y-1">
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="h-8"
+                      autoFocus
+                    />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editBudget}
+                      onChange={(e) => setEditBudget(e.target.value)}
+                      placeholder="Monthly budget in USD (optional)"
+                      className="h-8"
+                    />
+                  </div>
                   <Button
                     size="icon"
                     variant="ghost"
-                    onClick={() => renameCat.mutate({ id: c.id, name: editName, color: editColor })}
+                    onClick={() =>
+                      renameCat.mutate({
+                        id: c.id,
+                        name: editName,
+                        color: editColor,
+                        budget: editBudget,
+                      })
+                    }
                     aria-label="Save"
                   >
                     <Check className="h-4 w-4" />
@@ -238,7 +279,14 @@ export function CategoryManager({
                     className="h-4 w-4 shrink-0 rounded-full border"
                     style={{ background: c.color }}
                   />
-                  <span className="flex-1 truncate">{c.name}</span>
+                  <span className="flex-1 truncate">
+                    {c.name}
+                    {c.budget != null && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        ${Number(c.budget).toFixed(2)}/mo
+                      </span>
+                    )}
+                  </span>
                   <Button
                     size="icon"
                     variant="ghost"

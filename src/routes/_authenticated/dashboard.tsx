@@ -45,9 +45,19 @@ import {
   Search,
   Sun,
   Moon,
+  Download,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { addDays, addMonths, format, isBefore, parseISO, startOfDay } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarDays,
+  format,
+  isBefore,
+  parseISO,
+  startOfDay,
+} from "date-fns";
 import {
   CATEGORY_COLORS as DEFAULT_CATEGORY_COLORS,
   PRESETS,
@@ -76,7 +86,23 @@ type Sub = {
   notes: string | null;
   url: string | null;
   plan: string | null;
+  status: string;
+  trial_ends: string | null;
   created_at: string;
+};
+
+type PriceEntry = {
+  id: string;
+  cost: number;
+  currency: string;
+  changed_at: string;
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  trialing: "Trial",
+  paused: "Paused",
+  cancelled: "Cancelled",
 };
 
 function safeUrl(url: string | null | undefined): string | null {
@@ -102,12 +128,12 @@ function faviconFor(url: string | null | undefined): string | null {
 // Display-only roll-forward: if the stored next billing date is in the past,
 // project it forward by the billing cycle instead of showing a stale date.
 // Nothing is persisted until the user edits the row.
-function effectiveNextDate(s: Sub): { label: string; overdue: boolean } | null {
+function effectiveNextDate(s: Sub): { label: string; overdue: boolean; date: Date } | null {
   if (!s.next_billing_date) return null;
   let d = startOfDay(parseISO(s.next_billing_date));
   if (isNaN(d.getTime())) return null;
   const today = startOfDay(new Date());
-  if (!isBefore(d, today)) return { label: format(d, "yyyy-MM-dd"), overdue: false };
+  if (!isBefore(d, today)) return { label: format(d, "yyyy-MM-dd"), overdue: false, date: d };
   let guard = 0;
   while (isBefore(d, today) && guard < 100) {
     switch (s.billing_cycle) {
@@ -125,7 +151,7 @@ function effectiveNextDate(s: Sub): { label: string; overdue: boolean } | null {
     }
     guard++;
   }
-  return { label: `${format(d, "yyyy-MM-dd")} (est.)`, overdue: true };
+  return { label: `${format(d, "yyyy-MM-dd")} (est.)`, overdue: true, date: d };
 }
 
 type SortKey = "created" | "name" | "cost" | "next";
@@ -144,10 +170,17 @@ function Dashboard() {
   const [selectedPlanIdx, setSelectedPlanIdx] = useState(0);
   const [currency, setCurrency] = useState("USD");
   const [billingCycle, setBillingCycle] = useState("monthly");
+  const [status, setStatus] = useState("active");
+  const [trialEnds, setTrialEnds] = useState("");
   const [urlValue, setUrlValue] = useState("");
   const [costStr, setCostStr] = useState("");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("created");
+  const [showTips, setShowTips] = useState(false);
+
+  useEffect(() => {
+    setShowTips(!localStorage.getItem("subtracker-tips-dismissed"));
+  }, []);
 
   const { data: subs = [], isLoading } = useQuery({
     queryKey: ["subscriptions"],
@@ -158,6 +191,21 @@ function Dashboard() {
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Sub[];
+    },
+  });
+
+  const { data: priceHistory = [] } = useQuery({
+    queryKey: ["price-history", editing?.id],
+    enabled: !!editing,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("price_history")
+        .select("id,cost,currency,changed_at")
+        .eq("subscription_id", editing!.id)
+        .order("changed_at", { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      return data as PriceEntry[];
     },
   });
 
@@ -176,12 +224,32 @@ function Dashboard() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Sub> }) => {
+    mutationFn: async ({
+      id,
+      patch,
+      prevCost,
+    }: {
+      id: string;
+      patch: Partial<Sub>;
+      prevCost: number;
+    }) => {
       const { error } = await supabase.from("subscriptions").update(patch).eq("id", id);
       if (error) throw error;
+      if (patch.cost !== undefined && Number(patch.cost) !== Number(prevCost)) {
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData.user) {
+          await supabase.from("price_history").insert({
+            user_id: userData.user.id,
+            subscription_id: id,
+            cost: Number(prevCost),
+            currency: patch.currency ?? "USD",
+          });
+        }
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      qc.invalidateQueries({ queryKey: ["price-history"] });
       setOpen(false);
       setEditing(null);
       toast.success("Subscription updated");
@@ -202,13 +270,18 @@ function Dashboard() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const activeSubs = useMemo(
+    () => subs.filter((s) => s.status !== "paused" && s.status !== "cancelled"),
+    [subs],
+  );
+
   const totals = useMemo(() => {
-    const monthly = subs.reduce(
+    const monthly = activeSubs.reduce(
       (s, x) => s + monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency),
       0,
     );
     const byCat: Record<string, number> = {};
-    subs.forEach((x) => {
+    activeSubs.forEach((x) => {
       const m = monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency);
       byCat[x.category] = (byCat[x.category] || 0) + m;
     });
@@ -216,7 +289,26 @@ function Dashboard() {
       name,
       value: Number(value.toFixed(2)),
     }));
-    return { monthly, annual: monthly * 12, chartData };
+    const overBudget = Object.entries(byCat)
+      .map(([name, value]) => {
+        const cat = categories.find((c) => c.name === name);
+        if (!cat || cat.budget == null) return null;
+        return value > Number(cat.budget) ? { name, value, budget: Number(cat.budget) } : null;
+      })
+      .filter((x): x is { name: string; value: number; budget: number } => x !== null);
+    return { monthly, annual: monthly * 12, chartData, overBudget };
+  }, [activeSubs, categories]);
+
+  const upcoming = useMemo(() => {
+    const today = startOfDay(new Date());
+    return subs
+      .filter((s) => s.status !== "cancelled" && s.status !== "paused" && s.next_billing_date)
+      .map((s) => ({ s, nd: effectiveNextDate(s) }))
+      .filter((x): x is { s: Sub; nd: NonNullable<ReturnType<typeof effectiveNextDate>> } =>
+        Boolean(x.nd),
+      )
+      .sort((a, b) => a.nd.date.getTime() - b.nd.date.getTime())
+      .slice(0, 8);
   }, [subs]);
 
   const visibleSubs = useMemo(() => {
@@ -246,11 +338,53 @@ function Dashboard() {
         );
         break;
       default:
-        // "created": API order is already created_at desc
         break;
     }
     return out;
   }, [subs, query, sortBy]);
+
+  const exportCsv = () => {
+    const headers = [
+      "name",
+      "category",
+      "plan",
+      "cost",
+      "currency",
+      "billing_cycle",
+      "next_billing_date",
+      "status",
+      "trial_ends",
+      "url",
+      "notes",
+    ];
+    const esc = (v: string | number | null) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [
+      headers.join(","),
+      ...subs.map((s) =>
+        headers.map((h) => esc((s as unknown as Record<string, string | null>)[h])).join(","),
+      ),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `subtracker-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success("CSV downloaded");
+  };
+
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify(subs, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `subtracker-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success("JSON downloaded");
+  };
 
   const handleSignOut = async () => {
     await qc.cancelQueries();
@@ -265,6 +399,8 @@ function Dashboard() {
     setSelectedPlanIdx(0);
     setCurrency("USD");
     setBillingCycle(p.plans[0]?.billing_cycle ?? "monthly");
+    setStatus("active");
+    setTrialEnds("");
     setUrlValue(p.url ?? "");
     setCostStr(p.plans[0] ? String(p.plans[0].cost) : "");
     setOpen(true);
@@ -275,6 +411,8 @@ function Dashboard() {
     setSelectedPlanIdx(0);
     setCurrency("USD");
     setBillingCycle("monthly");
+    setStatus("active");
+    setTrialEnds("");
     setUrlValue("");
     setCostStr("");
     setOpen(true);
@@ -284,6 +422,8 @@ function Dashboard() {
     setEditing(s);
     setCurrency(s.currency);
     setBillingCycle(s.billing_cycle);
+    setStatus(s.status);
+    setTrialEnds(s.trial_ends ?? "");
     setUrlValue(s.url ?? "");
     setCostStr(String(s.cost));
     const p = PRESETS.find((pp) => pp.name.toLowerCase() === s.name.toLowerCase());
@@ -318,12 +458,15 @@ function Dashboard() {
       notes: (fd.get("notes") as string) || null,
       url: (fd.get("url") as string) || preset?.url || null,
       plan: (fd.get("plan") as string) || null,
+      status,
+      trial_ends: status === "trialing" && trialEnds ? trialEnds : null,
     };
 
     if (editing) {
       updateMutation.mutate({
         id: editing.id,
         patch: { ...base, color: editing.color || CATEGORY_COLORS[category] || null },
+        prevCost: editing.cost,
       });
       return;
     }
@@ -371,17 +514,94 @@ function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
+        {showTips && (
+          <Card className="border-primary/30 bg-primary/5 shadow-[var(--shadow-soft)]">
+            <CardContent className="flex items-start gap-3 p-4">
+              <div className="flex-1 space-y-1 text-sm">
+                <p className="font-medium">Quick tips</p>
+                <p className="text-muted-foreground">
+                  Set a <b>next billing date</b> and status per subscription so upcoming payments
+                  and trials show up below. Use <b>Manage categories</b> to set a monthly budget per
+                  category and get over-budget alerts.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  localStorage.setItem("subtracker-tips-dismissed", "1");
+                  setShowTips(false);
+                }}
+                aria-label="Dismiss tips"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         <section className="grid gap-4 md:grid-cols-3">
           <StatCard label="Monthly spend (USD)" value={totals.monthly} accent />
           <StatCard label="Annual spend (USD)" value={totals.annual} />
           <StatCard label="Subscriptions" value={subs.length} raw />
         </section>
 
+        {upcoming.length > 0 && (
+          <Card className="shadow-[var(--shadow-soft)]">
+            <CardHeader>
+              <CardTitle className="font-display text-2xl">Upcoming payments</CardTitle>
+              <CardDescription>Next billing dates, soonest first</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {upcoming.map(({ s, nd }) => {
+                  const days = differenceInCalendarDays(nd.date, startOfDay(new Date()));
+                  const chip = nd.overdue
+                    ? { text: "overdue", cls: "bg-red-500/15 text-red-600 dark:text-red-400" }
+                    : days === 0
+                      ? { text: "today", cls: "bg-primary/15 text-primary" }
+                      : {
+                          text: `in ${days}d`,
+                          cls:
+                            days <= 7
+                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                              : "bg-secondary text-secondary-foreground",
+                        };
+                  return (
+                    <div
+                      key={s.id}
+                      className="flex items-center gap-3 rounded-xl border bg-card p-3"
+                    >
+                      <div
+                        className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white"
+                        style={{ background: s.color || CATEGORY_COLORS[s.category] }}
+                      >
+                        {s.name.slice(0, 1)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{s.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatMoney(Number(s.cost), s.currency)} · {nd.label}
+                        </div>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${chip.cls}`}>
+                        {chip.text}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <section className="grid gap-6 lg:grid-cols-5">
           <Card className="lg:col-span-3 shadow-[var(--shadow-soft)]">
             <CardHeader>
               <CardTitle className="font-display text-2xl">Where the money goes</CardTitle>
-              <CardDescription>Monthly spend by category (USD-equivalent)</CardDescription>
+              <CardDescription>
+                Monthly spend by category (USD-equivalent, active + trials)
+              </CardDescription>
             </CardHeader>
             <CardContent className="h-[320px]">
               {totals.chartData.length === 0 ? (
@@ -414,6 +634,20 @@ function Dashboard() {
                 </ResponsiveContainer>
               )}
             </CardContent>
+            {totals.overBudget.length > 0 && (
+              <CardContent className="border-t pt-3">
+                <p className="mb-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+                  Over budget
+                </p>
+                <ul className="space-y-0.5 text-xs text-muted-foreground">
+                  {totals.overBudget.map((o) => (
+                    <li key={o.name}>
+                      <b>{o.name}</b>: ${o.value.toFixed(2)} of ${o.budget.toFixed(2)}/mo
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            )}
           </Card>
 
           <Card className="lg:col-span-2 shadow-[var(--shadow-soft)]">
@@ -451,6 +685,12 @@ function Dashboard() {
         <section>
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <h2 className="font-display mr-auto text-3xl">Your subscriptions</h2>
+            <Button variant="outline" size="sm" onClick={exportCsv}>
+              <Download className="mr-1 h-3.5 w-3.5" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportJson}>
+              <Download className="mr-1 h-3.5 w-3.5" /> JSON
+            </Button>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -492,10 +732,17 @@ function Dashboard() {
                   const fav = faviconFor(s.url);
                   const nd = effectiveNextDate(s);
                   const link = safeUrl(s.url);
+                  const dimmed = s.status === "paused" || s.status === "cancelled";
+                  const trialDays =
+                    s.status === "trialing" && s.trial_ends
+                      ? differenceInCalendarDays(parseISO(s.trial_ends), startOfDay(new Date()))
+                      : null;
                   return (
                     <div
                       key={s.id}
-                      className="flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)]"
+                      className={`flex items-center gap-4 rounded-xl border bg-card p-4 shadow-[var(--shadow-soft)] ${
+                        dimmed ? "opacity-60" : ""
+                      }`}
                     >
                       <div
                         className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-semibold text-white"
@@ -526,7 +773,25 @@ function Dashboard() {
                           <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
                             {s.category}
                           </span>
-                          {nd?.overdue && (
+                          {s.status !== "active" && (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs ${
+                                s.status === "trialing"
+                                  ? "bg-sky-500/15 text-sky-600 dark:text-sky-400"
+                                  : s.status === "paused"
+                                    ? "bg-secondary text-muted-foreground"
+                                    : "bg-red-500/15 text-red-600 dark:text-red-400"
+                              }`}
+                            >
+                              {STATUS_LABELS[s.status] ?? s.status}
+                            </span>
+                          )}
+                          {trialDays !== null && (
+                            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-600 dark:text-sky-400">
+                              {trialDays < 0 ? "trial ended" : `${trialDays}d left`}
+                            </span>
+                          )}
+                          {nd?.overdue && s.status === "active" && (
                             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400">
                               past due
                             </span>
@@ -544,7 +809,7 @@ function Dashboard() {
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {formatMoney(Number(s.cost), s.currency)} {s.currency} / {s.billing_cycle}
-                          {nd && ` · next ${nd.label}`}
+                          {nd && s.status !== "cancelled" && ` · next ${nd.label}`}
                         </div>
                       </div>
                       <div className="text-right">
@@ -681,6 +946,18 @@ function Dashboard() {
                   placeholder="0.00"
                   required
                 />
+                {editing && priceHistory.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Previous:{" "}
+                    {priceHistory
+                      .slice(0, 3)
+                      .map(
+                        (h) =>
+                          `${formatMoney(Number(h.cost), h.currency)} (${format(parseISO(h.changed_at), "yyyy-MM-dd")})`,
+                      )
+                      .join(", ")}
+                  </p>
+                )}
               </div>
               <div className="space-y-1 col-span-1">
                 <Label>Currency</Label>
@@ -715,6 +992,42 @@ function Dashboard() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
+                <Label>Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="trialing">Trial</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {status === "trialing" ? (
+                <div className="space-y-1">
+                  <Label>Trial ends</Label>
+                  <Input
+                    type="date"
+                    value={trialEnds}
+                    onChange={(e) => setTrialEnds(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <Label>Next billing</Label>
+                  <Input
+                    name="next_billing_date"
+                    type="date"
+                    defaultValue={editing?.next_billing_date ?? ""}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <Label>Category</Label>
                   <button
@@ -744,35 +1057,26 @@ function Dashboard() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>Next billing</Label>
-                <Input
-                  name="next_billing_date"
-                  type="date"
-                  defaultValue={editing?.next_billing_date ?? ""}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <Label>Website URL</Label>
-              <div className="flex items-center gap-2">
-                {faviconFor(urlValue) && (
-                  <img
-                    src={faviconFor(urlValue)!}
-                    alt=""
-                    className="h-5 w-5 rounded-sm"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-                    }}
+                <Label>Website URL</Label>
+                <div className="flex items-center gap-2">
+                  {faviconFor(urlValue) && (
+                    <img
+                      src={faviconFor(urlValue)!}
+                      alt=""
+                      className="h-5 w-5 rounded-sm"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                      }}
+                    />
+                  )}
+                  <Input
+                    name="url"
+                    type="url"
+                    placeholder="https://…"
+                    value={urlValue}
+                    onChange={(e) => setUrlValue(e.target.value)}
                   />
-                )}
-                <Input
-                  name="url"
-                  type="url"
-                  placeholder="https://…"
-                  value={urlValue}
-                  onChange={(e) => setUrlValue(e.target.value)}
-                />
+                </div>
               </div>
             </div>
             <div className="space-y-1">
