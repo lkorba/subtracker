@@ -32,7 +32,19 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
 import {
   Plus,
   Trash2,
@@ -47,16 +59,19 @@ import {
   Moon,
   Download,
   X,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   addDays,
   addMonths,
   differenceInCalendarDays,
+  differenceInCalendarMonths,
   format,
   isBefore,
   parseISO,
   startOfDay,
+  startOfMonth,
 } from "date-fns";
 import {
   CATEGORY_COLORS as DEFAULT_CATEGORY_COLORS,
@@ -71,6 +86,7 @@ import {
 } from "@/lib/subscription-presets";
 import { CategoryManager, useCategories } from "@/components/category-manager";
 import { AccountSettings } from "@/components/account-settings";
+import { ApiAccess } from "@/components/api-access";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
@@ -173,6 +189,7 @@ function Dashboard() {
   const [open, setOpen] = useState(false);
   const [catManagerOpen, setCatManagerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiOpen, setApiOpen] = useState(false);
   const [preset, setPreset] = useState<Preset | null>(null);
   const [editing, setEditing] = useState<Sub | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Sub | null>(null);
@@ -308,6 +325,62 @@ function Dashboard() {
       .filter((x): x is { name: string; value: number; budget: number } => x !== null);
     return { monthly, annual: monthly * 12, chartData, overBudget };
   }, [activeSubs, categories]);
+
+  const byCurrency = useMemo(() => {
+    const m: Record<string, { native: number; usd: number; count: number }> = {};
+    activeSubs.forEach((x) => {
+      const c = (m[x.currency] ??= { native: 0, usd: 0, count: 0 });
+      c.native += monthlyAmount(Number(x.cost), x.billing_cycle);
+      c.usd += monthlyAmountInUsd(Number(x.cost), x.billing_cycle, x.currency);
+      c.count++;
+    });
+    return Object.entries(m)
+      .map(([code, v]) => ({ code, ...v }))
+      .sort((a, b) => b.usd - a.usd);
+  }, [activeSubs]);
+
+  const projection = useMemo(() => {
+    const windowStart = startOfMonth(new Date());
+    const buckets = Array.from({ length: 12 }, (_, i) => ({
+      label: format(addMonths(windowStart, i), "MMM"),
+      usd: 0,
+    }));
+    const monthly = monthlyAmountInUsd;
+    for (const s of activeSubs) {
+      let d: Date | null = null;
+      if (s.next_billing_date) {
+        const parsed = startOfDay(parseISO(s.next_billing_date));
+        if (!isNaN(parsed.getTime())) d = parsed;
+      }
+      if (!d) {
+        // ponytail: no next_billing_date → assume the sub renews every month;
+        // refine when real renewal dates get entered.
+        buckets.forEach((b) => (b.usd += monthly(Number(s.cost), s.billing_cycle, s.currency)));
+        continue;
+      }
+      let guard = 0;
+      while (guard < 200) {
+        const i = differenceInCalendarMonths(startOfMonth(d), windowStart);
+        if (i >= 0 && i < 12)
+          buckets[i].usd += monthly(Number(s.cost), s.billing_cycle, s.currency);
+        switch (s.billing_cycle) {
+          case "weekly":
+            d = addDays(d, 7);
+            break;
+          case "quarterly":
+            d = addMonths(d, 3);
+            break;
+          case "yearly":
+            d = addMonths(d, 12);
+            break;
+          default:
+            d = addMonths(d, 1);
+        }
+        guard++;
+      }
+    }
+    return buckets.map((b) => ({ label: b.label, usd: Math.round(b.usd) }));
+  }, [activeSubs]);
 
   const upcoming = useMemo(() => {
     const today = startOfDay(new Date());
@@ -505,6 +578,14 @@ function Dashboard() {
             <Button
               variant="ghost"
               size="icon"
+              onClick={() => setApiOpen(true)}
+              aria-label="API access"
+            >
+              <KeyRound className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setSettingsOpen(true)}
               aria-label="Settings"
             >
@@ -682,6 +763,61 @@ function Dashboard() {
                   );
                 })}
               </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-5">
+          <Card className="lg:col-span-2 shadow-[var(--shadow-soft)]">
+            <CardHeader>
+              <CardTitle className="font-display text-2xl">Spend by currency</CardTitle>
+              <CardDescription>Monthly equivalent, active + trials</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {byCurrency.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active subscriptions.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {byCurrency.map((c) => (
+                    <li
+                      key={c.code}
+                      className="flex items-center justify-between gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium">{c.code}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {c.count} sub{c.count === 1 ? "" : "s"} · {formatMoney(c.native, c.code)}/mo
+                        ≈ <b className="text-foreground">${c.usd.toFixed(2)}/mo</b>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-3 shadow-[var(--shadow-soft)]">
+            <CardHeader>
+              <CardTitle className="font-display text-2xl">Projected spend</CardTitle>
+              <CardDescription>
+                Next 12 months, USD-equivalent, based on billing cycles
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={projection} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                    tickFormatter={(v: number) => `$${v}`}
+                    width={48}
+                  />
+                  <Tooltip formatter={(v: number) => [`$${v.toFixed(2)}/mo`, "USD"]} />
+                  <Bar dataKey="usd" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
         </section>
@@ -1131,6 +1267,7 @@ function Dashboard() {
       </AlertDialog>
 
       <CategoryManager open={catManagerOpen} onOpenChange={setCatManagerOpen} />
+      <ApiAccess open={apiOpen} onOpenChange={setApiOpen} />
       <AccountSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
