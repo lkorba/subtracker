@@ -60,6 +60,7 @@ import {
   Download,
   X,
   KeyRound,
+  BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -576,6 +577,11 @@ function Dashboard() {
               <Plus className="mr-1 h-4 w-4" /> Add subscription
             </Button>
             <ThemeToggle />
+            <Button variant="ghost" size="icon" asChild aria-label="Documentation">
+              <a href="/docs" target="_blank" rel="noreferrer">
+                <BookOpen className="h-4 w-4" />
+              </a>
+            </Button>
             <Button
               variant="ghost"
               size="icon"

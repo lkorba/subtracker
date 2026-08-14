@@ -146,7 +146,10 @@ export function ApiAccess({
           <DialogTitle className="font-display text-2xl">API access</DialogTitle>
           <DialogDescription>
             Programmatic access for Zapier, Make, scripts. Base URL:{" "}
-            <code className="rounded bg-muted px-1 text-xs">{API_BASE}</code>
+            <code className="rounded bg-muted px-1 text-xs">{API_BASE}</code>. Full reference:{" "}
+            <a href="/docs" target="_blank" rel="noreferrer" className="underline">
+              docs
+            </a>
           </DialogDescription>
         </DialogHeader>
 
