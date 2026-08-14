@@ -177,6 +177,7 @@ function Dashboard() {
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("created");
   const [showTips, setShowTips] = useState(false);
+  const urlFav = faviconFor(urlValue);
 
   useEffect(() => {
     setShowTips(!localStorage.getItem("subtracker-tips-dismissed"));
@@ -1059,9 +1060,9 @@ function Dashboard() {
               <div className="space-y-1">
                 <Label>Website URL</Label>
                 <div className="flex items-center gap-2">
-                  {faviconFor(urlValue) && (
+                  {urlFav && (
                     <img
-                      src={faviconFor(urlValue)!}
+                      src={urlFav}
                       alt=""
                       className="h-5 w-5 rounded-sm"
                       onError={(e) => {
