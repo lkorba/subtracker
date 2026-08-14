@@ -708,8 +708,7 @@ function Dashboard() {
                       innerRadius={70}
                       outerRadius={110}
                       paddingAngle={2}
-                      label={({ name, value }) => `${name}: $${Number(value).toFixed(2)}`}
-                      labelLine={{ stroke: "hsl(var(--muted-foreground))" }}
+                      label={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                     >
                       {totals.chartData.map((e) => (
                         <Cell key={e.name} fill={CATEGORY_COLORS[e.name] || "#94a3b8"} />
@@ -813,13 +812,19 @@ function Dashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={projection} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={10}
+                    interval="preserveStartEnd"
+                  />
                   <YAxis
                     tickLine={false}
                     axisLine={false}
-                    fontSize={12}
+                    fontSize={10}
                     tickFormatter={(v: number) => `$${v}`}
-                    width={48}
+                    width={52}
                   />
                   <Tooltip formatter={(v: number) => [`$${v.toFixed(2)}/mo`, "USD"]} />
                   <Bar dataKey="usd" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
