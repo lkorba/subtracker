@@ -156,6 +156,15 @@ function effectiveNextDate(s: Sub): { label: string; overdue: boolean; date: Dat
 
 type SortKey = "created" | "name" | "cost" | "next";
 
+function downloadBlob(blob: Blob, filename: string, label: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast.success(`${label} downloaded`);
+}
+
 function Dashboard() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -364,27 +373,21 @@ function Dashboard() {
     };
     const lines = [
       headers.join(","),
-      ...subs.map((s) =>
-        headers.map((h) => esc((s as unknown as Record<string, string | null>)[h])).join(","),
-      ),
+      ...subs.map((s) => headers.map((h) => esc(s[h as keyof Sub])).join(",")),
     ];
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `subtracker-export-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success("CSV downloaded");
+    downloadBlob(
+      new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }),
+      `subtracker-export-${new Date().toISOString().slice(0, 10)}.csv`,
+      "CSV",
+    );
   };
 
   const exportJson = () => {
-    const blob = new Blob([JSON.stringify(subs, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `subtracker-export-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success("JSON downloaded");
+    downloadBlob(
+      new Blob([JSON.stringify(subs, null, 2)], { type: "application/json" }),
+      `subtracker-export-${new Date().toISOString().slice(0, 10)}.json`,
+      "JSON",
+    );
   };
 
   const handleSignOut = async () => {
@@ -999,10 +1002,11 @@ function Dashboard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="trialing">Trial</SelectItem>
-                    <SelectItem value="paused">Paused</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                    {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
