@@ -345,7 +345,6 @@ function Dashboard() {
       label: format(addMonths(windowStart, i), "MMM"),
       usd: 0,
     }));
-    const monthly = monthlyAmountInUsd;
     for (const s of activeSubs) {
       let d: Date | null = null;
       if (s.next_billing_date) {
@@ -355,14 +354,16 @@ function Dashboard() {
       if (!d) {
         // ponytail: no next_billing_date → assume the sub renews every month;
         // refine when real renewal dates get entered.
-        buckets.forEach((b) => (b.usd += monthly(Number(s.cost), s.billing_cycle, s.currency)));
+        buckets.forEach(
+          (b) => (b.usd += monthlyAmountInUsd(Number(s.cost), s.billing_cycle, s.currency)),
+        );
         continue;
       }
       let guard = 0;
       while (guard < 200) {
         const i = differenceInCalendarMonths(startOfMonth(d), windowStart);
         if (i >= 0 && i < 12)
-          buckets[i].usd += monthly(Number(s.cost), s.billing_cycle, s.currency);
+          buckets[i].usd += monthlyAmountInUsd(Number(s.cost), s.billing_cycle, s.currency);
         switch (s.billing_cycle) {
           case "weekly":
             d = addDays(d, 7);

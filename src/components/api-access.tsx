@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -81,6 +81,10 @@ export function ApiAccess({
     },
   });
 
+  useEffect(() => {
+    if (webhook?.url) setWhUrl(webhook.url);
+  }, [webhook?.url]);
+
   const createKey = useMutation({
     mutationFn: async () => {
       const token = newToken();
@@ -116,7 +120,7 @@ export function ApiAccess({
 
   const saveWebhook = useMutation({
     mutationFn: async (url: string) => {
-      if (!url.trim()) return;
+      if (!url.trim()) throw new Error("Webhook URL is required");
       if (webhook?.id) {
         const { error } = await supabase
           .from("api_webhooks")
@@ -224,7 +228,7 @@ export function ApiAccess({
             <div className="flex gap-2">
               <Input
                 placeholder="https://hooks.zapier.com/…"
-                defaultValue={webhook?.url ?? ""}
+                value={whUrl}
                 onChange={(e) => setWhUrl(e.target.value)}
               />
               <Button onClick={() => saveWebhook.mutate(whUrl)} disabled={saveWebhook.isPending}>
